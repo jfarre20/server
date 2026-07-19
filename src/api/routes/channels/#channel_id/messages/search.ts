@@ -20,7 +20,7 @@
 
 import { Request, Response, Router } from "express";
 import { HTTPError } from "lambert-server/HTTPError";
-import { FindManyOptions, Like } from "typeorm";
+import { FindManyOptions, IsNull, Like, Not, Raw } from "typeorm";
 import { route } from "@spacebar/api/util/handlers/route";
 import { Channel, Message } from "@spacebar/database";
 import { FieldErrors, getPermission } from "@spacebar/util";
@@ -98,6 +98,29 @@ router.get(
         if (author_id) query.where.author = { id: author_id };
         //@ts-ignore
         if (content) query.where.content = Like(`%${content}%`);
+
+        // has: link / embed / file / image / video / sound / sticker
+        const has = req.query.has instanceof Array ? req.query.has[0] : req.query.has;
+        if (has && typeof has === "string") {
+            const hasFilters: Record<string, Record<string, unknown>> = {
+                link: { content: Like("%http%://%") },
+                embed: { embeds: Raw((alias) => `${alias} IS NOT NULL AND ${alias} != '[]'`) },
+                file: { attachments: { id: Not(IsNull()) } },
+                image: { attachments: { content_type: Like("image/%") } },
+                video: { attachments: { content_type: Like("video/%") } },
+                sound: { attachments: { content_type: Like("audio/%") } },
+                sticker: { sticker_items: { id: Not(IsNull()) } },
+            };
+            const hasWhere = hasFilters[has];
+            if (!hasWhere)
+                throw FieldErrors({
+                    has: {
+                        message: "Value must be one of ('link', 'embed', 'file', 'image', 'video', 'sound', 'sticker').",
+                        code: "BASE_TYPE_CHOICES",
+                    },
+                });
+            Object.assign(query.where as object, hasWhere);
+        }
 
         const messages: Message[] = await Message.find(query);
         delete query.take;

@@ -34,7 +34,8 @@ if (!process.env) {
     isHeadlessProcess = true;
     require("dotenv").config({ quiet: true });
 }
-if (process.argv[1]?.endsWith("scripts/openapi.js")) isHeadlessProcess = true;
+// normalize separators so the check also matches Windows paths
+if (process.argv[1]?.replaceAll("\\", "/").endsWith("scripts/openapi.js")) isHeadlessProcess = true;
 
 if (!process.env.DATABASE && !isHeadlessProcess) {
     console.log(

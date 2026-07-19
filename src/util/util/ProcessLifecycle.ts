@@ -18,7 +18,8 @@
 
 import EventEmitter from "node:events";
 import whyIsNodeRunning from "why-is-node-running";
-import { DgramSocket } from "node-unix-socket";
+// node-unix-socket ships no Windows binary; it's only needed for systemd's
+// NOTIFY_SOCKET, so load it lazily where that env var is actually set.
 
 interface ProcessLifecycleEvents {
     starting: unknown[];
@@ -71,6 +72,9 @@ export class SystemdLifecycle {
 
         const buf = Buffer.from(data);
         console.log("Systemd notify socket path:", socketPath, "-", buf.length, "bytes");
+
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { DgramSocket } = require("node-unix-socket") as typeof import("node-unix-socket");
 
         return new Promise((res, rej) => {
             new DgramSocket().sendTo(buf, 0, buf.length, socketPath, (err) => {

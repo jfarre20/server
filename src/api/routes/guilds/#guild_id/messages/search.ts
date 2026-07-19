@@ -18,7 +18,7 @@
 
 import { Request, Response, Router } from "express";
 import { HTTPError } from "lambert-server/HTTPError";
-import { Between, FindManyOptions, FindOptionsWhere, In, LessThan, Like, MoreThan } from "typeorm";
+import { Between, FindManyOptions, FindOptionsWhere, In, IsNull, LessThan, Like, MoreThan, Not, Raw } from "typeorm";
 import { route } from "@spacebar/api/util/handlers/route";
 import { Channel, Member, Message } from "@spacebar/database";
 import { FieldErrors, Snowflake, getPermission } from "@spacebar/util";
@@ -53,6 +53,7 @@ router.get(
         } = req.query as Record<string, string>;
         const { author_id } = req.query as Record<string, string[] | string>;
         let { channel_id, mentions } = req.query as Record<string, string[] | string>;
+        const { has } = req.query as Record<string, string[] | string>;
         const parsedLimit = Number(limit) || 50;
         if (parsedLimit < 1 || parsedLimit > 100) throw new HTTPError("limit must be between 1 and 100", 422);
 
@@ -125,6 +126,41 @@ router.get(
                   ? { timestamp: LessThan(new Date(maxStamp)) }
                   : {}),
         };
+        // has: link / embed / file / image / video / sound / sticker
+        const hasValue = has instanceof Array ? has[0] : has;
+        if (hasValue) {
+            switch (hasValue) {
+                case "link":
+                    Object.assign(where, { content: Like("%http%://%") });
+                    break;
+                case "embed":
+                    Object.assign(where, { embeds: Raw((alias) => `${alias} IS NOT NULL AND ${alias} != '[]'`) });
+                    break;
+                case "file":
+                    Object.assign(where, { attachments: { id: Not(IsNull()) } });
+                    break;
+                case "image":
+                    Object.assign(where, { attachments: { content_type: Like("image/%") } });
+                    break;
+                case "video":
+                    Object.assign(where, { attachments: { content_type: Like("video/%") } });
+                    break;
+                case "sound":
+                    Object.assign(where, { attachments: { content_type: Like("audio/%") } });
+                    break;
+                case "sticker":
+                    Object.assign(where, { sticker_items: { id: Not(IsNull()) } });
+                    break;
+                default:
+                    throw FieldErrors({
+                        has: {
+                            message: "Value must be one of ('link', 'embed', 'file', 'image', 'video', 'sound', 'sticker').",
+                            code: "BASE_TYPE_CHOICES",
+                        },
+                    });
+            }
+        }
+
         mentions = mentions instanceof Array ? mentions : mentions ? [mentions] : [];
         let roleids = [] as string[];
         if (mentions) {
