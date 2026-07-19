@@ -73,6 +73,12 @@ export async function onVoiceStateUpdate(this: WebSocket, data: Payload) {
         isChanged = true;
     }
 
+    // Clients may omit optional flags; the columns are NOT NULL, and a
+    // failed insert here kills the whole gateway connection (close 4000)
+    voiceState.self_video ??= false;
+    voiceState.self_mute ??= false;
+    voiceState.self_deaf ??= false;
+
     // if user left voice channel, send an update to previous channel/guild to let other people know that the user left
     if (voiceState.session_id === this.session_id && body.guild_id == null && body.channel_id == null && (prevState?.guild_id || prevState?.channel_id)) {
         await emitEvent({
