@@ -26,6 +26,7 @@ interface UserEntityPleaseRewriteThankYou {
     id: Snowflake;
     username: string;
     discriminator: string;
+    global_name?: string;
     avatar?: string;
     accent_color?: number;
     banner?: string;
@@ -127,6 +128,7 @@ export enum PublicUserEnum {
     premium_type,
     theme_colors,
     pronouns,
+    global_name,
     badge_ids,
     avatar_decoration_data,
     display_name_styles,

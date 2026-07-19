@@ -69,6 +69,9 @@ export class User extends BaseClass {
     @Column({ nullable: true })
     pronouns?: string;
 
+    @Column({ nullable: true })
+    global_name?: string; // user-set display name ("pomelo" global name)
+
     @Column({ nullable: true, select: false })
     phone?: string; // phone number of the user
 
@@ -228,7 +231,7 @@ export class User extends BaseClass {
             id: this.id,
             username: this.username,
             discriminator: this.discriminator,
-            global_name: undefined, // TODO when pomelo
+            global_name: this.global_name ?? undefined,
             avatar: this.avatar ?? null,
             avatar_decoration_data: this.avatar_decoration_data,
             bot: this.bot,

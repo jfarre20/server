@@ -21,7 +21,6 @@ import { HTTPError } from "lambert-server/HTTPError";
 import { MoreThan } from "typeorm";
 import { route } from "@spacebar/api/util/handlers/route";
 import { Member } from "@spacebar/database";
-import { PublicMemberProjection } from "@spacebar/schemas";
 
 const router = Router({ mergeParams: true });
 
@@ -60,9 +59,15 @@ router.get(
 
         await Member.IsInGuildOrFail(req.user_id, guild_id);
 
+        // toPublicMember() below projects the response, and it only includes
+        // `user`/`roles` when the relations are loaded — without them the
+        // response violates the declared PublicMember shape and clients can't
+        // render anyone. No `select` here: combining select with relations +
+        // take excludes the hidden primary key TypeORM needs for DISTINCT
+        // pagination ("column distinctAlias.Member_index does not exist").
         const members = await Member.find({
             where: { guild_id, ...query },
-            select: Object.fromEntries(PublicMemberProjection.map((i) => [i, true])), // TODO: cleanup
+            relations: { user: true, roles: true },
             take: limit,
             order: { id: "ASC" },
         });
