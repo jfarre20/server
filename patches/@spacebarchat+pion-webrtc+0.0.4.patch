@@ -1,0 +1,185 @@
+diff --git a/node_modules/@spacebarchat/pion-webrtc/dist/PionSignalingDelegate.js b/node_modules/@spacebarchat/pion-webrtc/dist/PionSignalingDelegate.js
+index ce86054..fa88eaf 100644
+--- a/node_modules/@spacebarchat/pion-webrtc/dist/PionSignalingDelegate.js
++++ b/node_modules/@spacebarchat/pion-webrtc/dist/PionSignalingDelegate.js
+@@ -96,6 +96,15 @@ export class PionSignalingDelegate {
+         if (audioLevelExtensionId > -1) {
+             audioMedia.addExtension(audioLevelExtensionId, "urn:ietf:params:rtp-hdrext:ssrc-audio-level");
+         }
++        // The SFU multiplexes several publishers' SSRCs onto one downstream track
++        // and demuxes by the sdes:mid header extension. Browsers stop emitting MID
++        // after a stream's first packets, so the SFU restamps it — but only if pion
++        // negotiated the extension, which requires offering it here. (BUNDLE forces a
++        // single consistent extmap id across m-lines, so the audio-side id is reused.)
++        const sdesMidExtensionId = getIdForHeader(rtpHeaders, "urn:ietf:params:rtp-hdrext:sdes:mid");
++        if (sdesMidExtensionId > -1) {
++            audioMedia.addExtension(sdesMidExtensionId, "urn:ietf:params:rtp-hdrext:sdes:mid");
++        }
+         if (isChromium) {
+             // if this is chromium, apply this header
+             const transportWideCcHeaderId = getIdForHeader(rtpHeaders, "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01");
+@@ -127,6 +136,9 @@ export class PionSignalingDelegate {
+         if (transportWideCcHeaderId > -1) {
+             videoMedia.addExtension(transportWideCcHeaderId, "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01");
+         }
++        if (sdesMidExtensionId > -1) {
++            videoMedia.addExtension(sdesMidExtensionId, "urn:ietf:params:rtp-hdrext:sdes:mid");
++        }
+         if (isChromium) {
+             // if this is chromium, apply this header
+             const videoOrientationHeaderId = getIdForHeader(rtpHeaders, "urn:3gpp:video-orientation");
+diff --git a/node_modules/@spacebarchat/pion-webrtc/dist/PionWebRtcClient.js b/node_modules/@spacebarchat/pion-webrtc/dist/PionWebRtcClient.js
+index 51859fe..343f01a 100644
+--- a/node_modules/@spacebarchat/pion-webrtc/dist/PionWebRtcClient.js
++++ b/node_modules/@spacebarchat/pion-webrtc/dist/PionWebRtcClient.js
+@@ -33,10 +33,10 @@ export class PionWebRtcClient {
+         return this.outgoingSSRCS?.get(user_id) ?? {};
+     }
+     isProducingAudio() {
+-        return !!this.incomingSSRCS?.audio_ssrc;
++        return !!this._audioPublished;
+     }
+     isProducingVideo() {
+-        return !!this.incomingSSRCS?.video_ssrc;
++        return !!this._videoPublished;
+     }
+     publishTrack(type, ssrc) {
+         if (!this.incomingSSRCS)
+@@ -47,6 +47,7 @@ export class PionWebRtcClient {
+         else {
+             this.incomingSSRCS = { ...ssrc, audio_ssrc: this.incomingSSRCS.audio_ssrc };
+         }
++        if (type === "audio") this._audioPublished = true; else this._videoPublished = true;
+         this.room?.sfu.ipc.send({ type: "publish", clientId: this.uniqueId, trackType: type });
+         return Promise.resolve();
+     }
+@@ -61,6 +62,7 @@ export class PionWebRtcClient {
+                 this.incomingSSRCS.rtx_ssrc = undefined;
+             }
+         }
++        if (type === "audio") this._audioPublished = false; else this._videoPublished = false;
+         this.room?.sfu.ipc.send({ type: "stop-publish", clientId: this.uniqueId, trackType: type });
+     }
+     async subscribeToTrack(user_id, type) {
+diff --git a/node_modules/@spacebarchat/pion-webrtc/dist/PionWebRtcClient.js.bak b/node_modules/@spacebarchat/pion-webrtc/dist/PionWebRtcClient.js.bak
+new file mode 100644
+index 0000000..51859fe
+--- /dev/null
++++ b/node_modules/@spacebarchat/pion-webrtc/dist/PionWebRtcClient.js.bak
+@@ -0,0 +1,115 @@
++import EventEmitter from "node:events";
++import { randomUUID } from "node:crypto";
++export class PionWebRtcClient {
++    websocket;
++    user_id;
++    voiceRoomId;
++    webrtcConnected;
++    emitter;
++    room;
++    isStopped;
++    incomingSSRCS;
++    outgoingSSRCS;
++    uniqueId;
++    constructor(userId, roomId, websocket, room) {
++        this.user_id = userId;
++        this.voiceRoomId = roomId;
++        this.websocket = websocket;
++        this.room = room;
++        this.webrtcConnected = false;
++        this.incomingSSRCS = {};
++        this.isStopped = false;
++        this.outgoingSSRCS = new Map();
++        this.emitter = new EventEmitter();
++        this.uniqueId = randomUUID();
++    }
++    initIncomingSSRCs(ssrcs) {
++        this.incomingSSRCS = ssrcs;
++    }
++    getIncomingStreamSSRCs() {
++        return this.incomingSSRCS || {};
++    }
++    getOutgoingStreamSSRCsForUser(user_id) {
++        return this.outgoingSSRCS?.get(user_id) ?? {};
++    }
++    isProducingAudio() {
++        return !!this.incomingSSRCS?.audio_ssrc;
++    }
++    isProducingVideo() {
++        return !!this.incomingSSRCS?.video_ssrc;
++    }
++    publishTrack(type, ssrc) {
++        if (!this.incomingSSRCS)
++            this.incomingSSRCS = {};
++        if (type === "audio") {
++            this.incomingSSRCS.audio_ssrc = ssrc.audio_ssrc;
++        }
++        else {
++            this.incomingSSRCS = { ...ssrc, audio_ssrc: this.incomingSSRCS.audio_ssrc };
++        }
++        this.room?.sfu.ipc.send({ type: "publish", clientId: this.uniqueId, trackType: type });
++        return Promise.resolve();
++    }
++    stopPublishingTrack(type) {
++        if (type === "audio") {
++            if (this.incomingSSRCS)
++                this.incomingSSRCS.audio_ssrc = undefined;
++        }
++        else {
++            if (this.incomingSSRCS) {
++                this.incomingSSRCS.video_ssrc = undefined;
++                this.incomingSSRCS.rtx_ssrc = undefined;
++            }
++        }
++        this.room?.sfu.ipc.send({ type: "stop-publish", clientId: this.uniqueId, trackType: type });
++    }
++    async subscribeToTrack(user_id, type) {
++        const otherClient = this.room?.getClientByUserId(user_id);
++        if (!otherClient || !otherClient.uniqueId) {
++            console.log(`Cannot subscribe: user ${user_id} not found in the current voice room`);
++            return;
++        }
++        const result = await this.room?.sfu.ipc.request({ type: "subscribe", clientId: this.uniqueId, publisherId: otherClient.uniqueId, trackType: type });
++        const sssr = this.outgoingSSRCS?.get(user_id) ?? {};
++        if (!result || !result.ssrc) {
++            console.log("unable to subscribe");
++            return;
++        }
++        if (type === "audio")
++            sssr.audio_ssrc = result.ssrc;
++        else {
++            sssr.video_ssrc = result.ssrc;
++            sssr.rtx_ssrc = otherClient.getIncomingStreamSSRCs().rtx_ssrc;
++        }
++        console.log(`subscribed to track with ssrcs: ${result.ssrc}`);
++        this.outgoingSSRCS?.set(user_id, sssr);
++    }
++    unSubscribeFromTrack(user_id, type) {
++        const sssr = this.outgoingSSRCS?.get(user_id) ?? {};
++        let unsubscribedSSRC = -1;
++        if (type === "audio") {
++            unsubscribedSSRC = sssr.audio_ssrc ?? -1;
++            sssr.audio_ssrc = undefined;
++        }
++        else {
++            unsubscribedSSRC = sssr.video_ssrc ?? -1;
++            sssr.video_ssrc = undefined;
++            sssr.rtx_ssrc = undefined;
++        }
++        const otherClient = this.room?.getClientByUserId(user_id);
++        if (!otherClient || !otherClient.uniqueId) {
++            console.log(`Cannot subscribe: user ${user_id} not found in the current voice room`);
++            return;
++        }
++        console.log(`unsubscribed from track ssrcs: ${unsubscribedSSRC}`);
++        this.room?.sfu.ipc.send({ type: "unsubscribe", clientId: this.uniqueId, trackType: type, publisherId: otherClient.uniqueId });
++    }
++    isSubscribedToTrack(user_id, type) {
++        const ssrc = this.outgoingSSRCS?.get(user_id) ?? {};
++        if (type === "audio")
++            return ssrc.audio_ssrc !== undefined;
++        else
++            return ssrc.video_ssrc !== undefined;
++    }
++}
++//# sourceMappingURL=PionWebRtcClient.js.map
+\ No newline at end of file
