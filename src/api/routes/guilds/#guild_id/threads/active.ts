@@ -33,7 +33,7 @@ router.get("/", route({}), async (req: Request, res: Response) => {
 	const permissions = await getPermission(req.user_id, guild_id);
 	permissions.hasThrow("VIEW_CHANNEL");
 
-	const threads = (
+	const candidates = (
 		await Channel.find({
 			where: {
 				guild_id,
@@ -41,6 +41,29 @@ router.get("/", route({}), async (req: Request, res: Response) => {
 			},
 		})
 	).filter((thread) => !thread.thread_metadata?.archived);
+
+	// Filter to threads the caller can actually reach: VIEW_CHANNEL on the
+	// parent channel, and for private threads, thread membership (or
+	// MANAGE_THREADS). A guild-level check alone would leak private-thread and
+	// hidden-channel metadata (names/parents/owners) to any member.
+	const parentPerms = new Map<string, Awaited<ReturnType<typeof getPermission>>>();
+	const threads = [];
+	for (const thread of candidates) {
+		if (!thread.parent_id) continue;
+		let perm = parentPerms.get(thread.parent_id);
+		if (!perm) {
+			perm = await getPermission(req.user_id, guild_id, thread.parent_id);
+			parentPerms.set(thread.parent_id, perm);
+		}
+		if (!perm.has("VIEW_CHANNEL")) continue;
+		if (thread.type === ChannelType.GUILD_PRIVATE_THREAD && !perm.has("MANAGE_THREADS")) {
+			const isMember = await ThreadMember.count({
+				where: { id: thread.id, member: { id: req.user_id, guild_id } },
+			});
+			if (!isMember) continue;
+		}
+		threads.push(thread);
+	}
 
 	const memberRows = threads.length
 		? await ThreadMember.find({

@@ -192,6 +192,27 @@ router.patch(
             }
         }
 
+        // Cap the chatcord-added profile fields — unbounded here means a
+        // multi-MB value gets re-serialized into every member list / message
+        // author payload (bio is capped for the same reason).
+        if (body.global_name && body.global_name.length > 32) {
+            throw FieldErrors({
+                global_name: {
+                    code: "BASE_TYPE_BAD_LENGTH",
+                    message: "Display name must be 32 or fewer in length",
+                },
+            });
+        }
+
+        if (body.pronouns && body.pronouns.length > 40) {
+            throw FieldErrors({
+                pronouns: {
+                    code: "BASE_TYPE_BAD_LENGTH",
+                    message: "Pronouns must be 40 or fewer in length",
+                },
+            });
+        }
+
         if ("display_name_font_id" in body) {
             if (!body.display_name_font_id) user.display_name_styles = undefined;
             else {
